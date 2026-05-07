@@ -36,6 +36,11 @@ export const watchTheme = () => {
       return;
     }
 
+    // Ignore atomic-write temp files (Claude Code, VSCode, etc. write `<file>.tmp.<pid>.<ts>` then rename).
+    if (/\.tmp\.\d+\.\d+$/i.test(name)) {
+      return;
+    }
+
     try {
       if (running) return;
       const fileName = name.split(/[/\\]/gi).at(-1);
@@ -173,7 +178,6 @@ export const watchTheme = () => {
           )}`
         );
       }
-      running = false;
     } catch (err) {
       console.log(
         `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
@@ -181,6 +185,8 @@ export const watchTheme = () => {
         )}`,
         err
       );
+    } finally {
+      running = false;
     }
   });
 
@@ -193,6 +199,11 @@ export const watchTheme = () => {
     async (event, name) => {
       const startTime = Date.now();
 
+      // Ignore atomic-write temp files (same pattern as primary watcher above).
+      if (/\.tmp\.\d+\.\d+$/i.test(name)) {
+        return;
+      }
+
       try {
         if (running) return;
         running = true;
@@ -200,7 +211,6 @@ export const watchTheme = () => {
         await validateTemplates(true);
         await syncPresets(true);
         backupTemplates();
-        running = false;
       } catch (err) {
         console.log(
           `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
@@ -208,6 +218,8 @@ export const watchTheme = () => {
           )}`,
           err
         );
+      } finally {
+        running = false;
       }
     }
   );
