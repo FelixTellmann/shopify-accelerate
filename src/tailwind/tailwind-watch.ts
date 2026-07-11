@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { config, root_dir } from "../../shopify-accelerate";
 import { deleteFile, readFile } from "../utils/fs";
+import { createBurstQueue } from "../utils/burst-queue";
 const watch = require("node-watch");
 
 export const runTailwindCSSWatcher = () => {
@@ -96,53 +97,65 @@ export const runTailwindCSSWatcher = () => {
   });
 
   /*= =============== Tailwind Plugin Order ================ */
-  watch(path.join(root_dir, "assets"), { recursive: false, filter: /tailwind_pre_sort\.css\.liquid$/ }, async (evt, name) => {
-    if (
-      !name.match(/tailwind_pre_sort.css.liquid$/) ||
-      !fs.existsSync(path.join(root_dir, "./assets/tailwind_pre_sort.css.liquid"))
-    ) {
-      return;
-    }
-    const file = readFile(path.join(root_dir, "./assets/tailwind_pre_sort.css.liquid"), {
-      encoding: "utf-8",
-    });
-
-    const top = file
-      .split(/\n}/gi)
-      .filter((str) => !/\n@container \(/gi.test(str))
-      .join("\n}");
-    const bottom = `${file
-      .split(/\n}/gi)
-      .filter((str) => /\n@container \(/gi.test(str))
-      .join("\n}")}\n}`;
-    const content = top + bottom;
-
-    const classesInOrder = [];
-    const omitCompoundClasses = [":not", ":where", ">", "*", ","];
-
-    content.split("\n").forEach((line) => {
-      if (!line.startsWith(".")) {
+  // Tailwind rewrites tailwind_pre_sort during a class burst; coalesce + serialize the
+  // re-sort so we never read a half-written file or interleave the two output writes.
+  const enqueueSort = createBurstQueue(
+    async () => {
+      const sortPath = path.join(root_dir, "./assets/tailwind_pre_sort.css.liquid");
+      if (!fs.existsSync(sortPath)) {
         return;
       }
 
-      let writeOut = true;
+      const file = readFile(sortPath, { encoding: "utf-8" });
+      if (!file) {
+        return;
+      }
 
-      omitCompoundClasses.forEach((classToOmit) => {
-        if (line.includes(classToOmit)) {
-          writeOut = false;
+      const top = file
+        .split(/\n}/gi)
+        .filter((str) => !/\n@container \(/gi.test(str))
+        .join("\n}");
+      const bottom = `${file
+        .split(/\n}/gi)
+        .filter((str) => /\n@container \(/gi.test(str))
+        .join("\n}")}\n}`;
+      const content = top + bottom;
+
+      const classesInOrder = [];
+      const omitCompoundClasses = [":not", ":where", ">", "*", ","];
+
+      content.split("\n").forEach((line) => {
+        if (!line.startsWith(".")) {
           return;
+        }
+
+        let writeOut = true;
+
+        omitCompoundClasses.forEach((classToOmit) => {
+          if (line.includes(classToOmit)) {
+            writeOut = false;
+            return;
+          }
+        });
+
+        if (writeOut) {
+          const finalClassName = line.replace(/\./g, "").replace(/{/g, "").replace(/}/g, "").replace(/\\/g, "").trim();
+          if (finalClassName !== "") {
+            classesInOrder.push(`${finalClassName}`);
+          }
         }
       });
 
-      if (writeOut) {
-        const finalClassName = line.replace(/\./g, "").replace(/{/g, "").replace(/}/g, "").replace(/\\/g, "").trim();
-        if (finalClassName !== "") {
-          classesInOrder.push(`${finalClassName}`);
-        }
-      }
-    });
+      fs.writeFileSync(path.join(root_dir, `assets/tailwind.css.liquid`), content);
+      fs.writeFileSync(path.join(process.cwd(), ".tailwindorder"), classesInOrder.join("\n"));
+    },
+    { quietMs: 150, label: "tailwind-sort" }
+  );
 
-    fs.writeFileSync(path.join(root_dir, `assets/tailwind.css.liquid`), content);
-    fs.writeFileSync(path.join(process.cwd(), ".tailwindorder"), classesInOrder.join("\n"));
+  watch(path.join(root_dir, "assets"), { recursive: false, filter: /tailwind_pre_sort\.css\.liquid$/ }, (evt, name) => {
+    if (!name.match(/tailwind_pre_sort.css.liquid$/)) {
+      return;
+    }
+    enqueueSort(evt, name);
   });
 };

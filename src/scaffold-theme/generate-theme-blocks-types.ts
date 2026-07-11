@@ -17,17 +17,18 @@ export const generateThemeBlocksTypes = () => {
   let globalThemeBlocksUnionType = "export type GlobalThemeBlocks =";
   let typeContent = "";
 
+  const emittedBlockTypeNames = new Set<string>();
   const generateBlockTypes = (block, folder, key, rootSchema?: ShopifyThemeBlock | ShopifySection) => {
     if ("theme_block" in block && block.theme_block) {
       const newBlock = { ...block, folder: folder, filename: `${block.type}` };
+      const blockTypeName = `${capitalize(key)}${toPascalCase(newBlock.type).replace(capitalize(key), "")}`;
 
-      typeContent += `${blockToTypes(
-        newBlock,
-        `${capitalize(key)}${toPascalCase(newBlock.type).replace(capitalize(key), "")}`,
-        true,
-        rootSchema
-      )}\n`;
-      sectionUnionType += `\n  | ${capitalize(key)}${toPascalCase(newBlock.type).replace(capitalize(key), "")}Block`;
+      if (!emittedBlockTypeNames.has(blockTypeName)) {
+        emittedBlockTypeNames.add(blockTypeName);
+
+        typeContent += `${blockToTypes(newBlock, blockTypeName, true, rootSchema)}\n`;
+        sectionUnionType += `\n  | ${blockTypeName}Block`;
+      }
 
       block?.blocks?.forEach((childBlock) => generateBlockTypes(childBlock, folder, key, rootSchema));
     }

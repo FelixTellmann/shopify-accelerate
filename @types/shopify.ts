@@ -794,11 +794,7 @@ export type ShopifySectionPreset<T = unknown> = {
     ? any[]
     : never;
 
-  settings?: T extends never
-    ? { [T: string]: string | number | boolean } | undefined
-    : T extends unknown
-    ? { [T: string]: string | number | boolean } | undefined
-    : T extends { settings: any }
+  settings?: T extends { settings: any }
     ? Partial<PresetSettings<T["settings"]>> | undefined
     : { [T: string]: string | number | boolean } | undefined;
 };

@@ -23,15 +23,179 @@ import { generateSettingTypes } from "../scaffold-theme/generate-setting-types";
 import { getSchemaSources, getSources, getTargets, isAsset, isBlockTs, isLiquid, isSectionTs, isTypeScriptSchema } from "../scaffold-theme/parse-files";
 import { parseLocales } from "../scaffold-theme/parse-locales";
 import { deleteFile, readFile, writeCompareFile, writeOnlyNew } from "../utils/fs";
+import { createBurstQueue } from "../utils/burst-queue";
 
 export const watchTheme = () => {
-  const { folders, theme_path, ignore_assets, delete_external_assets, targets } = config;
+  const { folders, theme_path, ignore_assets, delete_external_assets } = config;
   let files_edited: { [T: string]: number[] } = {};
-  let running = false;
 
-  watch(Object.values(folders)?.filter((folder) => fs.existsSync(folder)), { recursive: true }, async (event, name) => {
+  const themeJsonRoots = [
+    path.join(theme_path, "sections"),
+    path.join(theme_path, "config"),
+    path.join(theme_path, "templates"),
+  ];
+
+  const isThemeJson = (name: string) => /\.json$/i.test(name) && themeJsonRoots.some((root) => name.includes(root));
+
+  const handleSourceChange = async (event: "update" | "remove", name: string) => {
     const startTime = Date.now();
+    const fileName = name.split(/[/\\]/gi).at(-1);
 
+    if (event === "remove") {
+      await getSources();
+      getTargets();
+
+      if (isAsset(name) && !/\.ts$/gi.test(name)) {
+        const targetPath = path.join(process.cwd(), theme_path, "assets", fileName);
+
+        if (delete_external_assets && fs.existsSync(targetPath)) {
+          deleteFile(targetPath);
+        }
+      }
+
+      if (/^_schema\.ts$/gi.test(fileName)) {
+        await delay(20);
+        const dir = name.replace(/[\\/]_schema\.ts$/gi, "");
+        if (fs.existsSync(dir)) {
+          generateMissingPresetsFiles(dir);
+          generateBlocksMissingPresetsFiles(dir);
+          generateSchemaFiles(dir);
+        }
+      }
+      if (/^_presets\.ts$/gi.test(fileName)) {
+        await delay(20);
+        const dir = name.replace(/[\\/]_presets\.ts$/gi, "");
+        if (fs.existsSync(dir)) {
+          generateMissingPresetsFiles(dir);
+          generateBlocksMissingPresetsFiles(dir);
+        }
+      }
+      return;
+    }
+
+    if (/^_schema\.ts$/gi.test(fileName)) {
+      const dir = name.replace(/[\\/]_schema\.ts$/gi, "");
+      generateMissingPresetsFiles(dir);
+      generateBlocksMissingPresetsFiles(dir);
+      generateSchemaFiles(dir);
+      getTargets();
+      await getSchemaSources();
+    }
+
+    if (/^_presets\.ts$/gi.test(fileName)) {
+      const dir = name.replace(/[\\/]_presets\.ts$/gi, "");
+      generateMissingPresetsFiles(dir);
+      generateBlocksMissingPresetsFiles(dir);
+    }
+
+    // File may have vanished mid-burst (atomic rename / rapid delete); skip rather than throw.
+    if (!fs.existsSync(name)) {
+      return;
+    }
+
+    const stat = fs.statSync(name);
+
+    if (stat.isDirectory() && !fs.existsSync(path.join(name, "_schema.ts"))) {
+      generateMissingPresetsFiles(name);
+      generateBlocksMissingPresetsFiles(name);
+      generateSchemaFiles(name);
+      getTargets();
+      await getSchemaSources();
+      parseLocales();
+      generateSchemaVariables();
+      generateSchemaLocales();
+      generateSectionsTypes();
+      generateThemeBlocksTypes();
+      generateClassicBlocksTypes();
+      generateCardsTypes();
+      generateSettingTypes();
+      generateLiquidFiles();
+      console.log(
+        `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(
+          `${Date.now() - startTime}ms`
+        )}] ${chalk.cyan(`File created: ${path.join(name, "_schema.ts").replace(process.cwd(), "")}`)}`
+      );
+    }
+
+    if (stat.isDirectory()) {
+      return;
+    }
+
+    const localFilePath = name.replace(process.cwd(), "");
+
+    files_edited[localFilePath] = [...(files_edited[localFilePath] ?? []), Date.now()];
+
+    if (isTypeScriptSchema(name)) {
+      getTargets();
+      await getSchemaSources();
+      const updated = await syncPresets(true);
+      if (!updated) {
+        parseLocales();
+        generateSchemaVariables();
+        generateSchemaLocales();
+        generateSectionsTypes();
+        generateThemeBlocksTypes();
+        generateClassicBlocksTypes();
+        generateCardsTypes();
+        generateSettingTypes();
+        generateLiquidFiles();
+      }
+
+      console.log(
+        `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
+          `File modified: ${name.replace(process.cwd(), "")}`
+        )}`
+      );
+    }
+    if (isAsset(name) && !/\.ts$/gi.test(name)) {
+      const targetPath = path.join(process.cwd(), theme_path, "assets", fileName);
+      const rawContent = readFile(name, { encoding: "utf-8" });
+
+      if (ignore_assets?.includes(targetPath.split(/[/\\]/)?.at(-1))) {
+        console.log(
+          `[${chalk.gray(new Date().toLocaleTimeString())}]: ${chalk.greenBright(
+            `Ignored: ${targetPath.replace(process.cwd(), "")}`
+          )}`
+        );
+        writeOnlyNew(targetPath, rawContent);
+      } else {
+        writeCompareFile(targetPath, rawContent);
+      }
+    }
+    if (isLiquid(name) || isSectionTs(name) || isBlockTs(name)) {
+      getTargets();
+      await getSources();
+      generateSchemaVariables();
+      generateLiquidFiles();
+      console.log(
+        `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
+          `File modified: ${name.replace(process.cwd(), "")}`
+        )}`
+      );
+    }
+  };
+
+  const handleThemeJsonChange = async () => {
+    getTargets();
+    await validateTemplates(true);
+    await syncPresets(true);
+    backupTemplates();
+  };
+
+  // Single shared queue across both watchers: serializes source-folder and theme-json
+  // passes so they never mutate config.sources / config.targets concurrently.
+  const enqueue = createBurstQueue(
+    async (event, name) => {
+      if (isThemeJson(name)) {
+        await handleThemeJsonChange();
+        return;
+      }
+      await handleSourceChange(event, name);
+    },
+    { label: "watch-theme" }
+  );
+
+  watch(Object.values(folders)?.filter((folder) => fs.existsSync(folder)), { recursive: true }, (event, name) => {
     if (/@utils[\\/]temp/gi.test(name)) {
       return;
     }
@@ -41,153 +205,7 @@ export const watchTheme = () => {
       return;
     }
 
-    try {
-      if (running) return;
-      const fileName = name.split(/[/\\]/gi).at(-1);
-
-      // console.log(fileName);
-      running = true;
-
-      if (event === "remove") {
-        await getSources();
-        getTargets();
-
-        if (isAsset(name) && !/\.ts$/gi.test(name)) {
-          const targetPath = path.join(process.cwd(), theme_path, "assets", fileName);
-
-          if (event === "remove" && delete_external_assets) {
-            const targetFile = fs.existsSync(targetPath);
-
-            if (targetFile) {
-              deleteFile(targetPath);
-            }
-          }
-        }
-
-        if (/^_schema\.ts$/gi.test(fileName)) {
-          await delay(20);
-          if (fs.existsSync(name.replace(/[\\/]_schema\.ts$/gi, ""))) {
-            generateMissingPresetsFiles(name.replace(/[\\/]_schema\.ts$/gi, ""));
-            generateBlocksMissingPresetsFiles(name.replace(/[\\/]_schema\.ts$/gi, ""));
-            generateSchemaFiles(name.replace(/[\\/]_schema\.ts$/gi, ""));
-          }
-        }
-        if (/^_presets\.ts$/gi.test(fileName)) {
-          await delay(20);
-          if (fs.existsSync(name.replace(/[\\/]_presets\.ts$/gi, ""))) {
-            generateMissingPresetsFiles(name.replace(/[\\/]_presets\.ts$/gi, ""));
-            generateBlocksMissingPresetsFiles(name.replace(/[\\/]_presets\.ts$/gi, ""));
-          }
-        }
-        running = false;
-        return;
-      }
-
-      if (/^_schema\.ts$/gi.test(fileName)) {
-        generateMissingPresetsFiles(name.replace(/[\\/]_schema\.ts$/gi, ""));
-        generateBlocksMissingPresetsFiles(name.replace(/[\\/]_schema\.ts$/gi, ""));
-        generateSchemaFiles(name.replace(/[\\/]_schema\.ts$/gi, ""));
-        getTargets();
-        await getSchemaSources();
-      }
-
-      if (/^_presets\.ts$/gi.test(fileName)) {
-        generateMissingPresetsFiles(name.replace(/[\\/]_presets\.ts$/gi, ""));
-        generateBlocksMissingPresetsFiles(name.replace(/[\\/]_presets\.ts$/gi, ""));
-      }
-
-      if (fs.statSync(name).isDirectory() && !fs.existsSync(path.join(name, "_schema.ts"))) {
-        if (fs.existsSync(name)) {
-          generateMissingPresetsFiles(name);
-          generateBlocksMissingPresetsFiles(name);
-          generateSchemaFiles(name);
-          getTargets();
-          await getSchemaSources();
-          parseLocales();
-          generateSchemaVariables();
-          generateSchemaLocales();
-          generateSectionsTypes();
-          generateThemeBlocksTypes();
-          generateClassicBlocksTypes();
-          generateCardsTypes();
-          generateSettingTypes();
-          generateLiquidFiles();
-          console.log(
-            `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(
-              `${Date.now() - startTime}ms`
-            )}] ${chalk.cyan(`File created: ${path.join(name, "_schema.ts").replace(process.cwd(), "")}`)}`
-          );
-        }
-      }
-
-      if (fs.statSync(name).isDirectory()) {
-        running = false;
-        return;
-      }
-
-      const localFilePath = name.replace(process.cwd(), "");
-
-      files_edited[localFilePath] = [...(files_edited[localFilePath] ?? []), Date.now()];
-
-      if (isTypeScriptSchema(name)) {
-        getTargets();
-        await getSchemaSources();
-        const updated = await syncPresets(true);
-        if (!updated) {
-          parseLocales();
-          generateSchemaVariables();
-          generateSchemaLocales();
-          generateSectionsTypes();
-          generateThemeBlocksTypes();
-          generateClassicBlocksTypes();
-          generateCardsTypes();
-          generateSettingTypes();
-          generateLiquidFiles();
-        }
-
-        console.log(
-          `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
-            `File modified: ${name.replace(process.cwd(), "")}`
-          )}`
-        );
-      }
-      if (isAsset(name) && !/\.ts$/gi.test(name)) {
-        const fileName = name.split(/[\\/]/gi).at(-1);
-        const targetPath = path.join(process.cwd(), theme_path, "assets", fileName);
-        const rawContent = readFile(name, { encoding: "utf-8" });
-
-        if (ignore_assets?.includes(targetPath.split(/[/\\]/)?.at(-1))) {
-          console.log(
-            `[${chalk.gray(new Date().toLocaleTimeString())}]: ${chalk.greenBright(
-              `Ignored: ${targetPath.replace(process.cwd(), "")}`
-            )}`
-          );
-          writeOnlyNew(targetPath, rawContent);
-        } else {
-          writeCompareFile(targetPath, rawContent);
-        }
-      }
-      if (isLiquid(name) || isSectionTs(name) || isBlockTs(name)) {
-        getTargets();
-        await getSources();
-        generateSchemaVariables();
-        generateLiquidFiles();
-        console.log(
-          `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
-            `File modified: ${name.replace(process.cwd(), "")}`
-          )}`
-        );
-      }
-    } catch (err) {
-      console.log(
-        `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
-          `File modified: ${name.replace(process.cwd(), "")}`
-        )}`,
-        err
-      );
-    } finally {
-      running = false;
-    }
+    enqueue(event, name);
   });
 
   watch(
@@ -196,31 +214,13 @@ export const watchTheme = () => {
       recursive: true,
       filter: /\.json$/,
     },
-    async (event, name) => {
-      const startTime = Date.now();
-
+    (event, name) => {
       // Ignore atomic-write temp files (same pattern as primary watcher above).
       if (/\.tmp\.\d+\.\d+$/i.test(name)) {
         return;
       }
 
-      try {
-        if (running) return;
-        running = true;
-        getTargets();
-        await validateTemplates(true);
-        await syncPresets(true);
-        backupTemplates();
-      } catch (err) {
-        console.log(
-          `[${chalk.gray(new Date().toLocaleTimeString())}]: [${chalk.magentaBright(`${Date.now() - startTime}ms`)}] ${chalk.cyan(
-            `File modified: ${name.replace(process.cwd(), "")}`
-          )}`,
-          err
-        );
-      } finally {
-        running = false;
-      }
+      enqueue(event, name);
     }
   );
 

@@ -24,6 +24,13 @@ import { generateThemeBlocksTypes } from "./generate-theme-blocks-types";
 import { getSchemaSources, getTargets } from "./parse-files";
 import { parseLocales } from "./parse-locales";
 
+// Instance (template) settings carry a `hidden_name_backup` value; schema settings are an
+// array that never does. Read it defensively so schema-shaped settings yield undefined.
+const getHiddenNameBackup = (settings: unknown): string | undefined =>
+  settings && typeof settings === "object" && !Array.isArray(settings) && "hidden_name_backup" in settings
+    ? (settings as { hidden_name_backup?: string }).hidden_name_backup
+    : undefined;
+
 /**
  * Formats block type by removing leading underscores and ensuring consistency
  */
@@ -48,7 +55,7 @@ const mapPresetBlocks = (
       if ("theme_block" in block && block.theme_block) {
         acc.push({
           ...block,
-          name: block.name ?? block?.settings?.hidden_name_backup,
+          name: block.name ?? getHiddenNameBackup(block?.settings),
         });
         return acc;
       }
@@ -58,7 +65,7 @@ const mapPresetBlocks = (
           if (rootBlock.theme_block) {
             acc.push({
               ...rootBlock,
-              name: rootBlock.name ?? rootBlock?.settings?.hidden_name_backup,
+              name: rootBlock.name ?? getHiddenNameBackup(rootBlock?.settings),
             });
           } else {
             acc.push(rootBlock);
@@ -72,7 +79,7 @@ const mapPresetBlocks = (
         Object.values(config.sources.blockSchemas).forEach((themeBlock) => {
           if (!/^_/gi.test(themeBlock.type)) {
             const themeBlockParsed = structuredClone(themeBlock);
-            acc.push({ ...themeBlockParsed, name: themeBlockParsed.name ?? themeBlockParsed?.settings?.hidden_name_backup });
+            acc.push({ ...themeBlockParsed, name: themeBlockParsed.name ?? getHiddenNameBackup(themeBlockParsed?.settings) });
           }
         });
         return acc;
@@ -86,7 +93,7 @@ const mapPresetBlocks = (
             ...potentialBlock,
             type: potentialBlock.folder,
             themeBlock: { ...potentialBlock, type: potentialBlock.folder },
-            name: potentialBlock.name ?? potentialBlock?.settings?.hidden_name_backup,
+            name: potentialBlock.name ?? getHiddenNameBackup(potentialBlock?.settings),
           });
           return acc;
         }
@@ -122,13 +129,13 @@ const mapPresetBlocks = (
               ...sectionBlock,
               cross_section: true,
               themeBlock: section,
-              name: sectionBlock.name ?? sectionBlock?.settings?.hidden_name_backup,
+              name: sectionBlock.name ?? getHiddenNameBackup(sectionBlock?.settings),
             });
             return acc;
           }
         }
       }
-      acc.push({ ...block, name: block.name ?? block?.settings?.hidden_name_backup });
+      acc.push({ ...block, name: block.name ?? getHiddenNameBackup(block?.settings) });
       return acc;
     }, []);
   }
@@ -139,7 +146,7 @@ const mapPresetBlocks = (
         acc.push({
           ...block,
           type: "cross_section" in block ? block.type : formatBlockType(block.type, schema?.folder),
-          name: block.name ?? block?.settings?.hidden_name_backup,
+          name: block.name ?? getHiddenNameBackup(block?.settings),
         });
         return acc;
       }
@@ -150,12 +157,12 @@ const mapPresetBlocks = (
             acc.push({
               ...rootBlock,
               type: formatBlockType(rootBlock.type, schema?.folder),
-              name: rootBlock.name ?? rootBlock?.settings?.hidden_name_backup,
+              name: rootBlock.name ?? getHiddenNameBackup(rootBlock?.settings),
             });
           } else {
             acc.push({
               ...rootBlock,
-              name: rootBlock.name ?? rootBlock?.settings?.hidden_name_backup,
+              name: rootBlock.name ?? getHiddenNameBackup(rootBlock?.settings),
             });
           }
         });
@@ -166,7 +173,7 @@ const mapPresetBlocks = (
         Object.values(config.sources.blockSchemas).forEach((themeBlock) => {
           if (!/^_/gi.test(themeBlock.type)) {
             const themeBlockParsed = structuredClone(themeBlock);
-            acc.push({ ...themeBlockParsed, name: themeBlockParsed.name ?? themeBlockParsed?.settings?.hidden_name_backup });
+            acc.push({ ...themeBlockParsed, name: themeBlockParsed.name ?? getHiddenNameBackup(themeBlockParsed?.settings) });
           }
         });
         return acc;
@@ -180,7 +187,7 @@ const mapPresetBlocks = (
             ...potentialBlock,
             type: potentialBlock.folder,
             themeBlock: { ...potentialBlock, type: potentialBlock.folder },
-            name: potentialBlock.name ?? potentialBlock?.settings?.hidden_name_backup,
+            name: potentialBlock.name ?? getHiddenNameBackup(potentialBlock?.settings),
           });
           return acc;
         }
@@ -215,14 +222,14 @@ const mapPresetBlocks = (
             acc.push({
               ...sectionBlock,
               themeBlock: section,
-              name: sectionBlock.name ?? sectionBlock?.settings?.hidden_name_backup,
+              name: sectionBlock.name ?? getHiddenNameBackup(sectionBlock?.settings),
             });
         }
 
         return acc;
       }
 
-      acc.push({ ...block, name: block.name ?? block?.settings?.hidden_name_backup });
+      acc.push({ ...block, name: block.name ?? getHiddenNameBackup(block?.settings) });
       return acc;
     }, []);
   }
@@ -391,7 +398,7 @@ export const syncPresets = async (watch = false) => {
       if (!sectionSchema) return;
 
       if (!sectionSchema.name) {
-        sectionSchema.name = sectionSchema?.settings?.hidden_name_backup ?? "";
+        sectionSchema.name = getHiddenNameBackup(sectionSchema?.settings) ?? "";
       }
 
       const sectionType = section.type;
