@@ -130,6 +130,7 @@ export type GlobalsState = {
     sectionGroups: string[];
     templates: string[];
     customerTemplates: string[];
+    liquidTemplates: string[];
     settingsFile: string;
     locale_duplicates: { [T: string]: string[] };
     settingsSchema: ShopifySettings;
@@ -210,6 +211,7 @@ export const config: GlobalsState = {
     sectionGroups: [],
     templates: [],
     customerTemplates: [],
+    liquidTemplates: [],
     settingsFile: undefined,
     locale_duplicates: {},
     settingsSchema: null,

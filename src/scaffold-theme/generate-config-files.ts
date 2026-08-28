@@ -31,4 +31,10 @@ export const generateConfigFiles = () => {
     const rawContent = readFile(file, { encoding: "utf-8" });
     writeOnlyNew(targetPath, rawContent);
   });
+  sources.liquidTemplates.forEach((file) => {
+    const relative_path = path.relative(config.folders.templates, file);
+    const targetPath = path.join(process.cwd(), theme_path, "templates", relative_path);
+    const rawContent = readFile(file, { encoding: "utf-8" });
+    writeOnlyNew(targetPath, rawContent);
+  });
 };

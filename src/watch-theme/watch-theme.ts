@@ -20,7 +20,7 @@ import { generateSchemaLocales } from "../scaffold-theme/generate-schema-locales
 import { generateSchemaVariables } from "../scaffold-theme/generate-schema-variables";
 import { generateSectionsTypes } from "../scaffold-theme/generate-section-types";
 import { generateSettingTypes } from "../scaffold-theme/generate-setting-types";
-import { getSchemaSources, getSources, getTargets, isAsset, isBlockTs, isLiquid, isSectionTs, isTypeScriptSchema } from "../scaffold-theme/parse-files";
+import { getSchemaSources, getSources, getTargets, isAsset, isBlockTs, isLiquid, isLiquidTemplate, isSectionTs, isTypeScriptSchema } from "../scaffold-theme/parse-files";
 import { parseLocales } from "../scaffold-theme/parse-locales";
 import { deleteFile, readFile, writeCompareFile, writeOnlyNew } from "../utils/fs";
 import { createBurstQueue } from "../utils/burst-queue";
@@ -161,6 +161,11 @@ export const watchTheme = () => {
       } else {
         writeCompareFile(targetPath, rawContent);
       }
+    }
+    if (isLiquidTemplate(name)) {
+      const relative_path = path.relative(folders.templates, name);
+      const targetPath = path.join(process.cwd(), theme_path, "templates", relative_path);
+      writeCompareFile(targetPath, readFile(name, { encoding: "utf-8" }));
     }
     if (isLiquid(name) || isSectionTs(name) || isBlockTs(name)) {
       getTargets();

@@ -49,6 +49,7 @@ export const getSources = async () => {
   const configs = [];
   const templates = [];
   const customerTemplates = [];
+  const liquidTemplates = [];
   const assets = [];
 
   sourceFiles.forEach((filePath) => {
@@ -123,6 +124,9 @@ export const getSources = async () => {
     if (isCustomerTemplate(filePath) && !isSectionGroup(filePath)) {
       customerTemplates.push(filePath);
     }
+    if (isLiquidTemplate(filePath)) {
+      liquidTemplates.push(filePath);
+    }
     if (isAsset(filePath)) {
       assets.push(filePath);
     }
@@ -154,6 +158,7 @@ export const getSources = async () => {
   config.sources.sectionGroups = sectionGroups;
   config.sources.templates = templates;
   config.sources.customerTemplates = customerTemplates;
+  config.sources.liquidTemplates = liquidTemplates;
   config.sources.settingsFile = settingsFiles?.[0];
   config.sources.settingsSchema = settingsFiles?.[0]
     ? (importFresh(settingsFiles[0]) as { settingsSchema: ShopifySettings })?.settingsSchema
@@ -738,6 +743,10 @@ export const isCustomerTemplate = (name: string) =>
   name.includes(config.folders.templates) && /[\\/]customers[\\/][^\\/]*\.json$/gi.test(name);
 
 export const isGiftCard = (name: string) => name.includes(config.folders.templates) && /[\\/]gift_card\.liquid$/gi.test(name);
+
+/* gift_card.liquid is excluded: generate-liquid-files owns it so its <t> tags still get extracted to locales. */
+export const isLiquidTemplate = (name: string) =>
+  name.includes(config.folders.templates) && /[\\/][^\\/]*\.liquid$/gi.test(name) && !isGiftCard(name);
 
 export const isTargetDynamicJs = (name: string) =>
   /[\\/]assets[\\/](__section--|__block--|__classic_block--)[^\\/]*.js$/gi.test(name);
